@@ -1,124 +1,69 @@
-import {
-  ColumnDef,
-  createColumnHelper,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from '@tanstack/react-table';
-
-import { deepMap } from 'nanostores';
-import { useStore } from '@nanostores/react';
-
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { faker } from '@faker-js/faker';
-import { PropsWithChildren, useEffect } from 'react';
-
-interface ColData {
-  firstName: string;
-  lastName: string;
-  age: number;
-}
-
-const accessors: Array<keyof ColData> = ['firstName', 'lastName', 'age'];
-
-function generateData(): ColData {
-  return {
-    firstName: faker.person.firstName(),
-    lastName: faker.person.lastName(),
-    age: faker.number.int(),
-  };
-}
-
-const defaultData: Array<ColData> = Array.from({ length: 10 }).map(
-  generateData,
-);
-
-const colHelper = createColumnHelper<ColData>();
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const defaultColumns: Array<ColumnDef<ColData, any>> = accessors.map(
-  (accessor) =>
-    colHelper.accessor(accessor, {
-      header(props) {
-        return props.column.id;
-      },
-      cell(props) {
-        return <Cell>{props.getValue()}</Cell>;
-      },
-    }),
-);
-
-function getRandomInts(count: number = 3, min: number = 0, max: number = 9) {
-  const ints: Array<number> = [];
-  for (let i = 0; i < count; ++i) {
-    let int = faker.number.int({ min, max });
-    while (ints.includes(int)) {
-      int = faker.number.int({ min, max });
-    }
-    ints.push(int);
-  }
-  return ints;
-}
-
-const $store = deepMap({
-  columns: defaultColumns,
-  data: defaultData,
-});
-
-function Cell({ children }: PropsWithChildren) {
-  return <span>{children}</span>;
-}
+import { TableWrapper, Table, ColumnMover } from './parts';
+import { $store, useStore } from './store';
+import { generateData, makeSid } from './utils';
+import { Columns } from './types';
 
 export default function App() {
-  const { columns, data } = useStore($store, {
-    keys: ['columns', 'data'],
-  });
+  const timerId = useRef<ReturnType<typeof setInterval>>();
+  const [isTimerActive, setIsTimerActive] = useState(true);
+
+  const { columns, rows } = useStore(['columns', 'rows']);
+
+  const onClick = useCallback(() => {
+    function updateData() {
+      const colId = columns.map(({ technicalName }) => technicalName)[
+        faker.number.int({ min: 0, max: columns.length - 1 })
+      ];
+      const sid = makeSid(
+        `TEST_${faker.number.int({ min: 0, max: rows.length - 1 })}`,
+      );
+      const newValue = generateData()[colId];
+      $store.setKey(`data.${sid}.${colId}`, newValue);
+    }
+    for (let i = 0; i < faker.number.int({ min: 1, max: 5 }); ++i) {
+      updateData();
+    }
+  }, [columns, rows]);
+
+  function toggleActive() {
+    setIsTimerActive((prev) => !prev);
+  }
 
   useEffect(() => {
-    const timerId = setInterval(() => {
-      const newOne = [...$store.get().data];
-      for (const int of getRandomInts(5)) {
-        newOne.splice(int, 1, generateData());
-      }
-      $store.setKey('data', newOne);
-    }, 1500);
-    return () => {
-      clearInterval(timerId);
-    };
-  }, []);
+    if (!isTimerActive && timerId.current) {
+      clearInterval(timerId.current);
+      timerId.current = undefined;
+    }
+    if (isTimerActive && !timerId.current) {
+      timerId.current = setInterval(onClick, 200);
+    }
+  }, [isTimerActive, onClick]);
 
-  const table = useReactTable<ColData>({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
+  const [base, pinned] = useMemo(() => {
+    const arr: [Columns, Columns] = [[], []];
+    columns.forEach((col) => {
+      arr[col.isPinned ? 1 : 0].push(col);
+    });
+    return arr;
+  }, [columns]);
 
   return (
-    <table>
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id} colSpan={header.colSpan}>
-                {flexRender(
-                  header.column.columnDef.header,
-                  header.getContext(),
-                )}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <button onClick={toggleActive}>{isTimerActive ? 'Off' : 'On'}</button>
+      <button onClick={onClick}>Update</button>
+      <TableWrapper>
+        {(pinned.length && (
+          <Table columns={pinned} rows={rows} startIndex={0} />
+        )) ||
+          null}
+        {(base.length && (
+          <Table columns={base} rows={rows} startIndex={pinned.length} />
+        )) ||
+          null}
+      </TableWrapper>
+      <ColumnMover />
+    </>
   );
 }
